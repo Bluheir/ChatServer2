@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -7,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace ChatServer2
 {
-	public class TCPUDPServer : IDisposable
+	public class TCPUDPServer : IAsyncDisposable
 	{
 		private readonly UdpClient udpServer;
 		private readonly TcpListener tcpServer;
@@ -15,7 +16,7 @@ namespace ChatServer2
 		private readonly IPEndPoint udpendpoint;
 		private readonly CancellationTokenSource tcpSource;
 		private readonly CancellationTokenSource udpSource;
-		private readonly Dictionary<TcpClient, ClientTokenTuple> clientTuples;
+		private readonly ConcurrentDictionary<TcpClient, ClientTokenTuple> clientTuples;
 		private bool disposed;
 		private bool hasStarted;
 
@@ -84,7 +85,7 @@ namespace ChatServer2
 			tcpServer = new TcpListener(endpoint);
 			tcpSource = new CancellationTokenSource();
 			udpSource = new CancellationTokenSource();
-			clientTuples = new Dictionary<TcpClient, ClientTokenTuple>();
+			clientTuples = new ConcurrentDictionary<TcpClient, ClientTokenTuple>();
 
 			udpServer.EnableBroadcast = true;
 		}
@@ -96,7 +97,7 @@ namespace ChatServer2
 
 			tcpServer.Start();
 			_ = HandleTCP();
-			_ = HandleUDP();
+			HandleUDP();
 
 			return Task.CompletedTask;
 		}
@@ -116,8 +117,12 @@ namespace ChatServer2
 		{
 			if (disposed)
 				return Task.CompletedTask;
-			clientTuples[client].TokenSource.Cancel();
-			clientTuples.Remove(client);
+
+
+			if (!clientTuples.TryRemove(client, out var ctuple))
+				return Task.CompletedTask;
+			ctuple.TokenSource.Cancel();
+			
 			client.GetStream().Close();
 			client.Close();
 
@@ -138,7 +143,7 @@ namespace ChatServer2
 					var client = await tcpServer.AcceptTcpClientAsync();
 					var tuple = new ClientTokenTuple(client);
 
-					clientTuples.Add(client, tuple);
+					clientTuples.GetOrAdd(client, tuple);
 					if (_onConnect != null)
 					{
 						await _onConnect(client);
@@ -147,22 +152,30 @@ namespace ChatServer2
 				}
 			}, tcpSource.Token);
 		}
-		private async Task HandleUDP()
+		private async void HandleUDP()
 		{
 			await Task.Run(async () =>
 			{
-				while(true)
+				try
 				{
-					if(udpSource.IsCancellationRequested)
+					while (true)
 					{
-						break;
+						if (udpSource.IsCancellationRequested)
+						{
+							break;
+						}
+
+						var result = await udpServer.ReceiveAsync();
+
+						if (_onMessageReceivedUDP != null)
+							await _onMessageReceivedUDP(result.RemoteEndPoint, result.Buffer);
 					}
-
-					var result = await udpServer.ReceiveAsync();
-
-					if (_onMessageReceivedUDP != null)
-						await _onMessageReceivedUDP(result.RemoteEndPoint, result.Buffer);
 				}
+				catch(Exception e)
+				{
+					Console.WriteLine(e);
+				}
+
 			}, udpSource.Token);
 		}
 		private async Task HandleClient(ClientTokenTuple tuple)
@@ -192,17 +205,20 @@ namespace ChatServer2
 			{
 				stream.Close();
 				tuple.Client.Close();
+				clientTuples.TryRemove(tuple.Client, out _);
 				if (_onDisconnect != null)
 					await _onDisconnect(tuple.Client);
 			}
 
 		}
-		public void Dispose()
+		public async ValueTask DisposeAsync()
 		{
 			if (disposed)
 				return;
 			if (hasStarted)
 			{
+				foreach (var client in clientTuples)
+					await DisconnectClientAsync(client.Key);
 				tcpSource.Cancel();
 				udpSource.Cancel();
 
@@ -215,6 +231,11 @@ namespace ChatServer2
 			udpSource.Dispose();
 
 			disposed = true;
+		}
+		~ TCPUDPServer()
+		{
+			if (!disposed)
+				DisposeAsync().GetAwaiter().GetResult();
 		}
 	}
 }

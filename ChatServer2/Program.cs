@@ -4,68 +4,192 @@ using System.Threading;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Collections.Generic;
+using System.Collections.Concurrent;
+using ChatMessages;
+using System.Linq;
+using Newtonsoft.Json;
 
 namespace ChatServer2
 {
 	class Program
 	{
-		private TCPUDPServer _server;
+		private readonly TCPUDPServer _server;
+		private readonly ConcurrentDictionary<TcpClient, ConnectedClientData> _clientData;
+		private readonly Dictionary<ulong, TcpClient> idToTcp;
+
+		private Program()
+		{
+			IPEndPoint a = new IPEndPoint(IPAddress.Parse("192.168.1.102"), 6878);
+			IPEndPoint b = new IPEndPoint(IPAddress.Parse("192.168.1.102"), 6878);
+
+			_server = new TCPUDPServer(a,b);
+			idToTcp = new Dictionary<ulong, TcpClient>();
+			_clientData = new ConcurrentDictionary<TcpClient, ConnectedClientData>();
+		}
 
 		private static void Main()
 		=> new Program().MainAsync().GetAwaiter().GetResult();
 
 		private async Task MainAsync()
 		{
-			var tcpendpoint = new IPEndPoint(
-				IPAddress.Parse("127.0.0.1"),
-				6969);
-			var udpendpoint = new IPEndPoint(
-				IPAddress.Parse("192.168.1.101"),
-				0
-				);
-			
-			_server = new TCPUDPServer(tcpendpoint, udpendpoint);
+			_server.OnConnect += OnClientConnect;
+			_server.OnDisconnect += OnClientDisconnect;
+			_server.OnMessageReceivedTCP += OnMessageReceivedTCP;
+			_server.OnMessageReceivedUDP += OnMessageReceivedUDP;
 
-			_server.OnMessageReceivedUDP += MessageReceived;
-			_server.OnMessageReceivedTCP += TCPMessageReceived;
-			_server.OnConnect += ClientConnect;
-			_server.OnDisconnect += Disconnect;
+			_server.TCPPacketSize = 32767;
 
 			await _server.StartAsync();
+			await Task.Delay(-1);
+		}
 
-			while(true)
+		private async Task OnClientDisconnect(TcpClient client)
+		{
+			_clientData.TryRemove(client, out var a);
+			
+			if(a.VoiceClientData != null)
 			{
-				string text = Console.ReadLine();
+				idToTcp.Remove(a.VoiceClientData.GetValueOrDefault());
+			}
 
-				if(text == "sendtest")
+			var msg = new BaseMessage() { MessageType = "DISCONNECT", Value = a.ClientId };
+			var buffer = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(msg));
+			
+			foreach(var c in _clientData.Keys)
+			{
+				await c.GetStream().WriteAsync(buffer, 0, buffer.Length);
+			}
+			Console.WriteLine($"Client {a.ClientId} disconnected with voice client id {(a.VoiceClientData as object) ?? "null"}");
+		}
+
+		private async Task OnMessageReceivedUDP(IPEndPoint endpoint, byte[] bytes)
+		{
+			//Console.WriteLine("Received sometin");
+			ArraySegment<byte> parse = new ArraySegment<byte>(bytes);
+			ulong id = BitConverter.ToUInt64(parse.Slice(0, 8));
+			
+			if (!idToTcp.ContainsKey(id))
+				return;
+			var clientdata = _clientData[idToTcp[id]];
+			clientdata.UDPEndpoint = endpoint;
+
+			var bb = Join(BitConverter.GetBytes(clientdata.ClientId), SubArray(bytes, 8, bytes.Length - 8));
+
+			foreach (var c in idToTcp.Values)
+			{
+				var eps = _clientData[c];
+				var ep = eps.UDPEndpoint;
+				if (ep == null || eps.ClientId == _clientData[idToTcp[id]].ClientId)
+					continue;
+				await _server.SendUDPAsync(bb, ep);
+			}
+		}
+
+		private async Task OnMessageReceivedTCP(TcpClient client, byte[] bytes)
+		{
+			var json = Encoding.UTF8.GetString(bytes).TrimEnd('\0');
+			var msg = JsonConvert.DeserializeObject<BaseMessage>(json);
+			
+			var type = msg.MessageType;
+			
+			if(type == "TEXT")
+			{
+				var tm = ToTextMessage(msg.Value.ToString(), _clientData[client].ClientId);
+
+				foreach (var c in _clientData)
 				{
-					await _server.BroadcastAsync(Encoding.ASCII.GetBytes("nigger nigger nigger nigger nigger"));
-					Console.WriteLine("sent test packet");
+					await SendMessageAsync(tm, c.Key);
+				}
+				Console.WriteLine($"<{tm.Sender}>: {(tm.Contents)}");
+			}
+			else if(type == "VOICE_CONNECT")
+			{
+				var cl = _clientData.GetOrAdd(client, (x) => new ConnectedClientData());
+
+
+				cl.VoiceClientData = RandomUlong(0, ulong.MaxValue);
+				
+				idToTcp.Add(cl.VoiceClientData.GetValueOrDefault(), client);
+				foreach(var c in _clientData)
+				{
+					if(c.Key == client)
+					{
+						await SendMessageAsync(new AudioAccept() { MessageType = "VOICE_CONNECT", Value = c.Value.ClientId, VoiceId = c.Value.VoiceClientData.GetValueOrDefault() }, c.Key);
+						continue;
+					}
+					if(c.Value.VoiceClientData != null)
+					{
+						await SendMessageAsync(ToNotifyVoiceConnect(cl.ClientId), c.Key);
+					}
 				}
 			}
 		}
 
-		private Task Disconnect(TcpClient arg)
+		private async Task OnClientConnect(TcpClient client)
 		{
-			Console.WriteLine("client disconnected");
-			return Task.CompletedTask;
+			var cdata = _clientData.GetOrAdd(client, x => new ConnectedClientData() { ClientId = _clientData.Count });
+
+			foreach(var c in _clientData)
+			{
+				if(c.Key == client)
+				{
+					await SendMessageAsync(ToNotifyWelcome(_clientData.Count - 1), client);
+					continue;
+				}
+				await SendMessageAsync(ToNotifyConnect(_clientData.Count - 1), c.Key);
+			}
+			Console.WriteLine($"Client connected with id {_clientData.Count - 1}");
 		}
 
-		private Task TCPMessageReceived(TcpClient arg1, byte[] arg2)
+		public static async Task SendMessageAsync(BaseMessage message, TcpClient client)
 		{
-			throw new NotImplementedException();
+			if (message == null)
+				return;
+			var json = JsonConvert.SerializeObject(message);
+			var bytes = Encoding.UTF8.GetBytes(json);
+
+			await client.GetStream().WriteAsync(bytes, 0, bytes.Length);
+		}
+		public static TextMessage ToTextMessage(string text, int sender)
+		{
+			return new TextMessage() { MessageType = "TEXT", Sender = sender, Contents = text };
+		}
+		public static ulong RandomUlong(ulong min, ulong max, Random rand = null)
+		{
+			rand = rand ?? new Random();
+
+			byte[] b = new byte[8];
+			rand.NextBytes(b);
+
+			return BitConverter.ToUInt64(b, 0);
 		}
 
-		private async Task ClientConnect(TcpClient arg)
+		public static BaseMessage ToNotifyConnect(int sender)
 		{
-			Console.WriteLine("client connected");
-			
+			return new BaseMessage() { MessageType = "CONNECT", Value = sender };
 		}
-
-		private async Task MessageReceived(IPEndPoint arg1, byte[] arg2)
+		public static BaseMessage ToNotifyDisconnect(int sender)
 		{
-			Console.WriteLine(Encoding.ASCII.GetString(arg2) + arg1.ToString());
-			await _server.SendUDPAsync(Encoding.ASCII.GetBytes("YO BITCH I RECEIVED YOUR MESSAGE"), arg1);
+			return new BaseMessage { MessageType = "DISCONNECT", Value = sender };
+		}
+		public static BaseMessage ToNotifyWelcome(int sender)
+		{
+			return new BaseMessage() { MessageType = "WELCOME", Value = sender };
+		}
+		public static BaseMessage ToNotifyVoiceConnect(int sender)
+		{
+			return new BaseMessage() { MessageType = "VOICE_CONNECT", Value = sender };
+		}
+		public static byte[] Join(byte[] arr1, byte[] arr2)
+		{
+			return arr1.Concat(arr2).ToArray();
+		}
+		public static T[] SubArray<T>(T[] data, int index, int length)
+		{
+			T[] result = new T[length];
+			Array.Copy(data, index, result, 0, length);
+			return result;
 		}
 	}
 }
