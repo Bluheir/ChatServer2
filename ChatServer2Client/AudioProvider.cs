@@ -55,12 +55,11 @@ namespace ChatServer2Client
 			_mixer = new MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(_format.SampleRate, _format.Channels));
 			_provider = new SampleToWaveProvider16(_mixer);
 			_providers = new ConcurrentDictionary<int, BufferedWaveProvider>();
-
 			_out = new WaveOutEvent();
-			_out.Init(_provider);
 			isPlaying = false;
 
 			_in = new WaveInEvent();
+			//_in.DeviceNumber
 			_in.BufferMilliseconds = bufferms;
 			_in.WaveFormat = _format;
 			_in.DataAvailable += DataAvailable;
@@ -85,6 +84,35 @@ namespace ChatServer2Client
 				};
 			}
 			lenting = frames * _format.Channels * (_format.BitsPerSample / 8);
+		}
+		public IList<string> GetInputDevices()
+		{
+			List<string> retval = new List<string>();
+			for (int n = 0; n < WaveIn.DeviceCount; n++)
+			{
+				var caps = WaveIn.GetCapabilities(n);
+				retval.Add(caps.ProductName);
+			}
+			return retval;
+		}
+		public IList<string> GetOutputDevices()
+		{
+			List<string> retval = new List<string>();
+			for(int n = 0; n < WaveOut.DeviceCount; n++)
+			{
+				var caps = WaveOut.GetCapabilities(n);
+				retval.Add(caps.ProductName);
+			}
+			return retval;
+		}
+		public void SetInputDeviceId(int deviceNum = -1)
+		{
+			_in.DeviceNumber = deviceNum;
+		}
+		public void InitializeWaveOut(int deviceNum = -1)
+		{
+			_out.DeviceNumber = deviceNum;
+			_out.Init(_provider);
 		}
 
 		private async void DataAvailable(object sender, WaveInEventArgs e)
@@ -135,7 +163,6 @@ namespace ChatServer2Client
 
 					if (_encode)
 					{
-						Console.WriteLine(dg.Length);
 						short[] b = new short[lenting / 2];
 						int dd = _dec.Decode(dg, 0, dg.Length, b, 0, frames);
 						dg = ShortsTobytes(b);

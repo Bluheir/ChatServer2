@@ -14,16 +14,23 @@ namespace ChatServer2Client
 	class Program
 	{
 		private readonly TcpClient tcp;
+		private CancellationTokenSource src;
 		private AudioProvider prov;
 		private readonly IPEndPoint endpoint;
 		private NetworkStream stream;
 		private int id;
 		private ulong voiceId;
+		private bool stopReading;
 
 		private Program()
 		{
+<<<<<<< HEAD
 			endpoint = new IPEndPoint(IPAddress.Parse("192.168.1.112"), 6878);
 
+=======
+			endpoint = new IPEndPoint(IPAddress.Parse("192.168.1.102"), 6878);
+			src = new CancellationTokenSource();
+>>>>>>> b5482178599e477ca946a0f1ad212216938ada48
 			tcp = new TcpClient();
 		}
 
@@ -68,6 +75,32 @@ namespace ChatServer2Client
 						var tm = JsonConvert.DeserializeObject<AudioAccept>(json);
 						voiceId = tm.VoiceId;
 						prov = new AudioProvider(endpoint, new WaveFormat(48000, 16, 2), true, 60, voiceId, id);
+
+						stopReading = true;
+						src.Cancel();
+						var outs = prov.GetOutputDevices();
+						Console.WriteLine($"There have been {outs.Count} output devices detected. Type the number next to the device you want to use.");
+						Console.WriteLine("0 : Auto");
+						for(int i = 0; i < outs.Count; i++)
+						{
+							Console.WriteLine($"{i + 1} : {outs[i]}");
+						}
+						var output = Convert.ToInt32(Console.ReadLine());
+						prov.InitializeWaveOut(output - 1);
+
+						var ins = prov.GetInputDevices();
+						Console.WriteLine($"There have been {ins.Count} input devices detected. Type the number next to the device you want to use.");
+						Console.WriteLine("0 : Auto");
+						for (int i = 0; i < ins.Count; i++)
+						{
+							Console.WriteLine($"{i + 1} : {ins[i]}");
+						}
+						var input = Convert.ToInt32(Console.ReadLine());
+						prov.SetInputDeviceId(input - 1);
+						
+						stopReading = false;
+						src = new CancellationTokenSource();
+
 						await prov.StartAsync();
 					}
 					else
@@ -86,9 +119,19 @@ namespace ChatServer2Client
 		}
 		private async void HandleSendsTCP(object s)
 		{
+			
 			while(true)
 			{
-				var text = Console.ReadLine();
+				if (stopReading)
+					continue;
+
+				var text = ConsoleReader.CancellableReadLine(src.Token);
+				
+				if(stopReading)
+				{
+					continue;
+				}
+				
 				if(text != "/connect")
 				{
 					var msg = new BaseMessage() { MessageType = "TEXT", Value = text };
@@ -99,6 +142,10 @@ namespace ChatServer2Client
 				}
 				else
 				{
+					if(voiceId != 0)
+					{
+						continue;
+					}
 					var msg = new BaseMessage() { MessageType = "VOICE_CONNECT" };
 					var json = JsonConvert.SerializeObject(msg);
 					var bytes = Encoding.UTF8.GetBytes(json);
@@ -107,5 +154,9 @@ namespace ChatServer2Client
 				}
 			}
 		}
+		/*
+		private static Task<string> ReadLineAsync()
+		=> Task.Run(Console.ReadLine);
+		*/
 	}
 }

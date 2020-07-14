@@ -107,6 +107,9 @@ namespace ChatServer2
 			{
 				var cl = _clientData.GetOrAdd(client, (x) => new ConnectedClientData());
 
+				if (cl.UDPEndpoint != null)
+					return;
+
 
 				cl.VoiceClientData = RandomUlong(0, ulong.MaxValue);
 				
