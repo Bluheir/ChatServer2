@@ -24,13 +24,8 @@ namespace ChatServer2Client
 
 		private Program()
 		{
-<<<<<<< HEAD
 			endpoint = new IPEndPoint(IPAddress.Parse("192.168.1.112"), 6878);
-
-=======
-			endpoint = new IPEndPoint(IPAddress.Parse("192.168.1.102"), 6878);
 			src = new CancellationTokenSource();
->>>>>>> b5482178599e477ca946a0f1ad212216938ada48
 			tcp = new TcpClient();
 		}
 
