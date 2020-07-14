@@ -24,7 +24,7 @@ namespace ChatServer2Client
 
 		private Program()
 		{
-			endpoint = new IPEndPoint(IPAddress.Parse("192.168.1.102"), 6878);
+			endpoint = new IPEndPoint(IPAddress.Parse("192.168.1.112"), 6878);
 			src = new CancellationTokenSource();
 			tcp = new TcpClient();
 		}
@@ -54,6 +54,10 @@ namespace ChatServer2Client
 				await stream.ReadAsync(bytes, 0, bytes.Length);
 
 				var json = Encoding.UTF8.GetString(bytes).TrimEnd('\0');
+				if(string.IsNullOrWhiteSpace(json))
+				{
+					continue;
+				}
 				var msg = JsonConvert.DeserializeObject<BaseMessage>(json);
 
 				var type = msg.MessageType;
