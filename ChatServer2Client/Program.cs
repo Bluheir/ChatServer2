@@ -22,7 +22,7 @@ namespace ChatServer2Client
 
 		private Program()
 		{
-			endpoint = new IPEndPoint(IPAddress.Parse("192.168.1.102"), 6878);
+			endpoint = new IPEndPoint(IPAddress.Parse("192.168.1.112"), 6878);
 
 			tcp = new TcpClient();
 		}
@@ -32,7 +32,7 @@ namespace ChatServer2Client
 
 		private async Task MainAsync()
 		{
-			await tcp.ConnectAsync("192.168.1.102", 6878);
+			await tcp.ConnectAsync(endpoint.Address, endpoint.Port);
 			stream = tcp.GetStream();
 
 			Thread receives = new Thread(HandleReceivesTCP);

@@ -20,8 +20,8 @@ namespace ChatServer2
 
 		private Program()
 		{
-			IPEndPoint a = new IPEndPoint(IPAddress.Parse("192.168.1.102"), 6878);
-			IPEndPoint b = new IPEndPoint(IPAddress.Parse("192.168.1.102"), 6878);
+			IPEndPoint a = new IPEndPoint(IPAddress.Parse("192.168.1.112"), 6878);
+			IPEndPoint b = new IPEndPoint(IPAddress.Parse("192.168.1.112"), 6878);
 
 			_server = new TCPUDPServer(a,b);
 			idToTcp = new Dictionary<ulong, TcpClient>();
