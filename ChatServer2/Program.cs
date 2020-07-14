@@ -16,15 +16,17 @@ namespace ChatServer2
 	{
 		private readonly TCPUDPServer _server;
 		private readonly ConcurrentDictionary<TcpClient, ConnectedClientData> _clientData;
+        private readonly Dictionary<int, TcpClient> cidToTcp;
 		private readonly Dictionary<ulong, TcpClient> idToTcp;
 
 		private Program()
 		{
-			IPEndPoint a = new IPEndPoint(IPAddress.Parse("192.168.1.102"), 6878);
-			IPEndPoint b = new IPEndPoint(IPAddress.Parse("192.168.1.102"), 6878);
+			IPEndPoint a = new IPEndPoint(IPAddress.Parse("192.168.1.112"), 6878);
+			IPEndPoint b = new IPEndPoint(IPAddress.Parse("192.168.1.112"), 6878);
 
 			_server = new TCPUDPServer(a,b);
 			idToTcp = new Dictionary<ulong, TcpClient>();
+            cidToTcp = new Dictionary<int, TcpClient>();
 			_clientData = new ConcurrentDictionary<TcpClient, ConnectedClientData>();
 		}
 
@@ -44,9 +46,12 @@ namespace ChatServer2
 			await Task.Delay(-1);
 		}
 
-		private async Task OnClientDisconnect(TcpClient client)
+
+
+        private async Task OnClientDisconnect(TcpClient client)
 		{
 			_clientData.TryRemove(client, out var a);
+            cidToTcp.Remove(a.ClientId);
 			
 			if(a.VoiceClientData != null)
 			{
@@ -131,18 +136,29 @@ namespace ChatServer2
 
 		private async Task OnClientConnect(TcpClient client)
 		{
-			var cdata = _clientData.GetOrAdd(client, x => new ConnectedClientData() { ClientId = _clientData.Count });
-
+            int id = _clientData.Count;
+            while (true)
+            {
+                if (cidToTcp.ContainsKey(id))
+                {
+                    id++;
+                }
+                else
+                    break;
+            }
+            cidToTcp.Add(id, client);
+            var cdata = _clientData.GetOrAdd(client, x => new ConnectedClientData() { ClientId = id });
+           
 			foreach(var c in _clientData)
 			{
 				if(c.Key == client)
 				{
-					await SendMessageAsync(ToNotifyWelcome(_clientData.Count - 1), client);
+					await SendMessageAsync(ToNotifyWelcome(id), client);
 					continue;
 				}
-				await SendMessageAsync(ToNotifyConnect(_clientData.Count - 1), c.Key);
+				await SendMessageAsync(ToNotifyConnect(id), c.Key);
 			}
-			Console.WriteLine($"Client connected with id {_clientData.Count - 1}");
+			Console.WriteLine($"Client connected with id {id}");
 		}
 
 		public static async Task SendMessageAsync(BaseMessage message, TcpClient client)
