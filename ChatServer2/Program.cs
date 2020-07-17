@@ -14,27 +14,39 @@ namespace ChatServer2
 {
 	class Program
 	{
-		private readonly TCPUDPServer _server;
+		private TCPUDPServer _server;
 		private readonly ConcurrentDictionary<TcpClient, ConnectedClientData> _clientData;
         private readonly Dictionary<int, TcpClient> cidToTcp;
 		private readonly Dictionary<ulong, TcpClient> idToTcp;
 
 		private Program()
 		{
-			IPEndPoint a = new IPEndPoint(IPAddress.Parse("192.168.1.112"), 6878);
-			IPEndPoint b = new IPEndPoint(IPAddress.Parse("192.168.1.112"), 6878);
-
-			_server = new TCPUDPServer(a,b);
 			idToTcp = new Dictionary<ulong, TcpClient>();
             cidToTcp = new Dictionary<int, TcpClient>();
 			_clientData = new ConcurrentDictionary<TcpClient, ConnectedClientData>();
 		}
 
-		private static void Main()
-		=> new Program().MainAsync().GetAwaiter().GetResult();
-
-		private async Task MainAsync()
+		private static void Main(string[] args)
 		{
+			IPEndPoint a;
+			IPEndPoint b;
+			if(args == null || args.Length < 2)
+			{
+				a = new IPEndPoint(IPAddress.Parse("192.168.2.165"), 6878);
+				b = new IPEndPoint(IPAddress.Parse("192.168.2.165"), 6878);
+			}
+			else
+			{
+				a = IPEndPoint.Parse(args[0]);
+				b = IPEndPoint.Parse(args[1]);
+			}
+
+			new Program().MainAsync(a, b).GetAwaiter().GetResult();
+		}
+
+		private async Task MainAsync(IPEndPoint a, IPEndPoint b)
+		{
+			_server = new TCPUDPServer(a, b);
 			_server.OnConnect += OnClientConnect;
 			_server.OnDisconnect += OnClientDisconnect;
 			_server.OnMessageReceivedTCP += OnMessageReceivedTCP;
@@ -131,6 +143,8 @@ namespace ChatServer2
 						await SendMessageAsync(ToNotifyVoiceConnect(cl.ClientId), c.Key);
 					}
 				}
+
+				Console.WriteLine($"Client {cl.ClientId} connected to VC with id {cl.VoiceClientData}");
 			}
 		}
 
